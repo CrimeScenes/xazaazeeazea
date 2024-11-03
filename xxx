@@ -154,6 +154,8 @@ end
 
 
 
+
+
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = game:GetService("Workspace").CurrentCamera
@@ -170,33 +172,9 @@ local AllBodyParts = {
     "LeftLowerLeg", "LeftUpperLeg", "RightLowerLeg", "RightUpperLeg", "RightFoot"
 }
 
-function Forlorn.mouse1click(x, y, delay)
-    x = x or 0
-    y = y or 0
-    delay = delay or 0.05
-
+function Forlorn.mouse1click(x, y)
     VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, false)
-    task.wait(delay)
     VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, false)
-
-    UserInputService.MouseIconEnabled = true
-end
-
-function Forlorn.sendMouseEvent(x, y, button, isPressed)
-    x = x or 0
-    y = y or 0
-    button = button or 0
-
-    VirtualInputManager:SendMouseButtonEvent(x, y, button, isPressed, game, false)
-    UserInputService.MouseIconEnabled = true
-end
-
-function Forlorn.mouse1press(x, y)
-    Forlorn.sendMouseEvent(x, y, 0, true)
-end
-
-function Forlorn.mouse1release(x, y)
-    Forlorn.sendMouseEvent(x, y, 0, false)
 end
 
 local function getMousePosition()
@@ -217,11 +195,17 @@ local function getPredictedPosition(character)
     local primaryPart = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Head")
     if primaryPart then
         local velocity = primaryPart.Velocity
-        local acceleration = primaryPart.AssemblyLinearVelocity - velocity
         local predictionMultiplier = getgenv().Forbidden.TriggerBot.Settings.Preds.PredictionMultiplier
         local timeToPredict = getgenv().Forbidden.TriggerBot.Settings.Preds.TimeToPredict or 0.1
 
-        local predictedPosition = primaryPart.Position + (velocity * timeToPredict * predictionMultiplier) + (0.5 * acceleration * (timeToPredict ^ 2))
+        -- Improved prediction calculation
+        local predictedPosition = primaryPart.Position + (velocity * timeToPredict * predictionMultiplier)
+        
+        -- Adjustment for airborne/moving targets
+        if character.Humanoid:GetState() == Enum.HumanoidStateType.Freefall then
+            predictedPosition = predictedPosition + Vector3.new(0, -1, 0) -- Predict for downward movement in the air
+        end
+        
         return predictedPosition
     end
     return nil
@@ -250,16 +234,23 @@ local function adjustAimForTarget(targetPosition)
         local offsetX = screenPosition.X - centerX
         local offsetY = screenPosition.Y - centerY
 
-        VirtualInputManager:SendMouseMoveEvent(centerX + offsetX, centerY + offsetY, game)
+        -- Adjust sensitivity for smoother aiming
+        VirtualInputManager:SendMouseMoveEvent(centerX + offsetX / 2, centerY + offsetY / 2, game) -- Adjust the divisor for sensitivity
     end
 end
 
-local function TriggerBotAction()
-    local ignoreKnife = getgenv().Forbidden.TriggerBot.Settings.Preds.Safety.IgnoreKnife
+local function isIgnoringKnife()
     local currentTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-    
-    if ignoreKnife and currentTool and 
-       (currentTool.Name:lower() == "knife" or currentTool.Name:lower() == "katana") then
+    if currentTool then
+        local toolName = currentTool.Name:lower() -- Convert tool name to lowercase for case-insensitive check
+        return toolName == "knife" or toolName == "katana" or toolName == "[knife]" or toolName == "[katana]"
+    end
+    return false
+end
+
+local function TriggerBotAction()
+    -- Check for knife/katana
+    if getgenv().Forbidden.TriggerBot.Settings.Preds.Safety.IgnoreKnife and isIgnoringKnife() then
         return -- Exit if IgnoreKnife is enabled and a knife/katana is equipped
     end
 
@@ -270,9 +261,7 @@ local function TriggerBotAction()
                 local closestPart = findClosestPart(player.Character)
                 if closestPart then
                     local predictedPosition = getPredictedPosition(player.Character)
-                    if predictedPosition and isWithinBoxFOV(predictedPosition) and os.clock() - lastClickTime >= getgenv().Forbidden.TriggerBot.Settings.Cooldown then
-                        lastClickTime = os.clock()
-                        
+                    if predictedPosition and isWithinBoxFOV(predictedPosition) then
                         adjustAimForTarget(closestPart.Position)
 
                         local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
@@ -282,10 +271,8 @@ local function TriggerBotAction()
                                 shootFunction:FireServer(player.Character)
                             else
                                 local mouseX, mouseY = getMousePosition()
-                                Forlorn.mouse1press(mouseX, mouseY)
-                                Forlorn.mouse1release(mouseX, mouseY)
+                                Forlorn.mouse1click(mouseX, mouseY)
                             end
-                            return
                         end
                     end
                 end
@@ -330,8 +317,6 @@ RunService.RenderStepped:Connect(function()
         TriggerBotAction()
     end
 end)
-
-
 
 
 
@@ -685,6 +670,14 @@ end)
 -- CamLock update camera position based on the targeted player
 RunService.RenderStepped:Connect(function()
     if IsTargeting and TargetPlayer and TargetPlayer.Character then
+        -- Check if the target player is knocked out
+        if TargetPlayer.Character.Humanoid.Health <= 0 then
+            -- If the target is knocked out, un-target
+            TargetPlayer = nil
+            IsTargeting = false  -- Stop targeting
+            return
+        end
+
         local BodyPart
         if Forbidden.CamLock.Normal.ClosestPart then
             BodyPart = GetClosestBodyPart(TargetPlayer.Character)
@@ -717,6 +710,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 end)
+
 
 
 local G                   = game
@@ -1055,6 +1049,15 @@ Run_Service.RenderStepped:Connect(function()
                 return
             end
 
+            -- Check if the target is knocked out
+            if Target.Character.Humanoid.Health <= 0 then
+                -- If the target is knocked out, unlock the camera
+                Target = nil
+                IsTargeting = false  -- Stop targeting
+                Fov.Visible = false  -- Ensure FOV is hidden
+                return
+            end
+            
             local closestPart, closestPoint = GetClosestHitPoint(Target.Character)
             if closestPart and closestPoint then
                 local velocity = GetVelocity(Target, closestPart.Name)
@@ -1065,6 +1068,7 @@ Run_Service.RenderStepped:Connect(function()
         Fov.Visible = false  -- Ensure FOV is hidden if not targeting
     end
 end)
+
 
 
 
