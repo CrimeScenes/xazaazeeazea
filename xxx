@@ -164,7 +164,6 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local lastClickTime = 0
 local isToggled = false
 
--- Define all body parts to consider for shooting
 local AllBodyParts = {
     "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart", "LeftHand", "RightHand", 
     "LeftLowerArm", "RightLowerArm", "LeftUpperArm", "RightUpperArm", "LeftFoot", 
@@ -222,9 +221,7 @@ local function getPredictedPosition(character)
         local predictionMultiplier = getgenv().Forbidden.TriggerBot.Settings.Preds.PredictionMultiplier
         local timeToPredict = getgenv().Forbidden.TriggerBot.Settings.Preds.TimeToPredict or 0.1
 
-        -- Predictive calculation considering velocity and acceleration
         local predictedPosition = primaryPart.Position + (velocity * timeToPredict * predictionMultiplier) + (0.5 * acceleration * (timeToPredict ^ 2))
-        
         return predictedPosition
     end
     return nil
@@ -253,29 +250,29 @@ local function adjustAimForTarget(targetPosition)
         local offsetX = screenPosition.X - centerX
         local offsetY = screenPosition.Y - centerY
 
-        -- Adding calculated offset to center the aim at the target position
         VirtualInputManager:SendMouseMoveEvent(centerX + offsetX, centerY + offsetY, game)
     end
 end
 
 local function TriggerBotAction()
+    local ignoreKnife = getgenv().Forbidden.TriggerBot.Settings.Preds.Safety.IgnoreKnife
+    local currentTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    
+    if ignoreKnife and currentTool and 
+       (currentTool.Name:lower() == "knife" or currentTool.Name:lower() == "katana") then
+        return -- Exit if IgnoreKnife is enabled and a knife/katana is equipped
+    end
+
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local humanoid = player.Character:FindFirstChild("Humanoid")
             if humanoid and humanoid.Health > 0 then
-                local currentTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-                if getgenv().Forbidden.TriggerBot.Settings.Preds.Safety.IgnoreKnife and 
-                   (currentTool and (currentTool.Name:lower() == "knife" or currentTool.Name:lower() == "katana")) then
-                    continue
-                end
-
                 local closestPart = findClosestPart(player.Character)
                 if closestPart then
                     local predictedPosition = getPredictedPosition(player.Character)
                     if predictedPosition and isWithinBoxFOV(predictedPosition) and os.clock() - lastClickTime >= getgenv().Forbidden.TriggerBot.Settings.Cooldown then
                         lastClickTime = os.clock()
                         
-                        -- Adjust aim to match the closest part
                         adjustAimForTarget(closestPart.Position)
 
                         local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
@@ -305,7 +302,6 @@ local function handleShootingMode()
     end
 end
 
--- Detect player's jump and perform the shooting action
 LocalPlayer.CharacterAdded:Connect(function(character)
     local humanoid = character:WaitForChild("Humanoid")
     humanoid.Jumping:Connect(function(isJumping)
@@ -764,7 +760,7 @@ local Games = {
     [15186202290] = {Name = "Da Strike", Argument = "MOUSE", Remote = "MAINEVENT"},
     [17319408836] = {Name = "OG Da Hood", Argument = "UpdateMousePos", Remote = "MainEvent", BodyEffects = "K.O",},
     [17780567699] = {Name = "Meko Hood", Argument = "UpdateMousePos", Remote = "MainEvent", BodyEffects = "K.O",},
-    [73033159436035] = {Name = "Da Craft", Argument = "UpdateMousePos", Remote = "MainEvent", BodyEffects = "K.O",},
+    [127504606438871] = {Name = "Da Craft", Argument = "UpdateMousePos", Remote = "MainEvent", BodyEffects = "K.O",},
     [139379854239480] = {Name = "Dee Hood", Argument = "UpdateMousePos", Remote = "MainEvent", BodyEffects = "K.O",},
     [85317083713029] = {Name = "Da kitty", Argument = "UpdateMousePos", Remote = "MainEvent", BodyEffects = "K.O",},
 }
