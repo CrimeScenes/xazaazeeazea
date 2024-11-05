@@ -344,9 +344,11 @@ local Camera = game:GetService("Workspace").CurrentCamera
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local Replicated_Storage = game:GetService("ReplicatedStorage")
 
 local lastClickTime = 0
 local isToggled = false
+local TargetPlayer = nil -- Target player initialization
 
 local AllBodyParts = {
     "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart", "LeftHand", "RightHand", 
@@ -418,6 +420,14 @@ local function adjustAimForTarget(targetPosition)
     end
 end
 
+local function isPlayerKnocked(player)
+    local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+    if humanoid then
+        return humanoid.Health > 0 and humanoid.Health <= 7 -- Example threshold for "knocked" state
+    end
+    return false
+end
+
 local function isIgnoringKnife()
     local currentTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
     if currentTool then
@@ -427,38 +437,27 @@ local function isIgnoringKnife()
     return false
 end
 
--- Check if player is knocked down
-local function isPlayerKnocked(player)
-    local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
-    if humanoid then
-        return humanoid.Health > 0 and humanoid.Health <= 7 -- Example threshold for "knocked" state
-    end
-    return false
-end
-
 local function TriggerBotAction()
-    if getgenv().TriggerBot.Settings.Preds.Safety.IgnoreKnife and isIgnoringKnife() then
-        return
-    end
+    -- Use the TargetPlayer from the main logic
+    if TargetPlayer and TargetPlayer.Character then
+        local humanoid = TargetPlayer.Character:FindFirstChild("Humanoid")
+        if humanoid and humanoid.Health > 0 and not isPlayerKnocked(TargetPlayer) then -- Skip knocked players
+            local predictedPosition = getPredictedPosition(TargetPlayer.Character)
+            if predictedPosition and isWithinBoxFOV(predictedPosition) then
+                local closestPart = findClosestPart(TargetPlayer.Character)
+                if closestPart then
+                    if os.clock() - lastClickTime >= 0.001 then
+                        lastClickTime = os.clock()
+                        
+                        adjustAimForTarget(closestPart.Position)
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local humanoid = player.Character:FindFirstChild("Humanoid")
-            if humanoid and humanoid.Health > 0 and not isPlayerKnocked(player) then -- Skip knocked players
-                local predictedPosition = getPredictedPosition(player.Character)
-                if predictedPosition and isWithinBoxFOV(predictedPosition) then
-                    local closestPart = findClosestPart(player.Character)
-                    if closestPart then
-                        if os.clock() - lastClickTime >= 0.001 then
-                            lastClickTime = os.clock()
-                            
-                            adjustAimForTarget(closestPart.Position)
-
-                            local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-                            if tool and tool:IsA("Tool") then
+                        local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                        if tool and tool:IsA("Tool") then
+                            -- Check if the current tool should be ignored based on the knife check
+                            if not isIgnoringKnife() then
                                 local shootFunction = tool:FindFirstChild("Fire")
                                 if shootFunction and shootFunction:IsA("RemoteEvent") then
-                                    shootFunction:FireServer(player.Character)
+                                    shootFunction:FireServer(TargetPlayer.Character)
                                 else
                                     local mouseX, mouseY = getMousePosition()
                                     Forlorn.mouse1click(mouseX, mouseY)
@@ -472,42 +471,26 @@ local function TriggerBotAction()
     end
 end
 
-local function handleShootingMode()
-    if getgenv().TriggerBot.Settings.Mode == "toggle" then
-        isToggled = not isToggled
-    else
-        RunService:BindToRenderStep("TriggerBotHold", Enum.RenderPriority.Input.Value, TriggerBotAction)
-    end
-end
-
-LocalPlayer.CharacterAdded:Connect(function(character)
-    local humanoid = character:WaitForChild("Humanoid")
-    humanoid.Jumping:Connect(function(isJumping)
-        if isJumping and isToggled then
-            TriggerBotAction()
-        end
-    end)
-end)
-
+-- Input handling to toggle TriggerBot
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == Enum.KeyCode[getgenv().KeyTrigger.TriggerBot:upper()] then
-        handleShootingMode()
+        isToggled = true  -- Set the toggle to true when the key is pressed
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input, gameProcessed)
-    if input.KeyCode == Enum.KeyCode[getgenv().KeyTrigger.TriggerBot:upper()] then
-        if getgenv().TriggerBot.Settings.Mode == "hold" then
-            RunService:UnbindFromRenderStep("TriggerBotHold")
-        end
+    if not gameProcessed and input.KeyCode == Enum.KeyCode[getgenv().KeyTrigger.TriggerBot:upper()] then
+        isToggled = false  -- Set the toggle to false when the key is released
     end
 end)
 
 RunService.RenderStepped:Connect(function()
-    if getgenv().TriggerBot.Settings.Mode == "hold" and UserInputService:IsKeyDown(Enum.KeyCode[getgenv().KeyTrigger.TriggerBot:upper()]) then
-        TriggerBotAction()
+    if isToggled then
+        TriggerBotAction()  -- Continuously trigger while the key is held down
     end
 end)
+
+
 
 
 
@@ -738,48 +721,6 @@ local function IsAlignedWithCamera(targetPlayer)
     return false
 end
 
-
--- TriggerBot functionality
-RunService.RenderStepped:Connect(function()
-    if TriggerBotEnabled and IsTargeting and TargetPlayer then
-        if IsAlignedWithCamera(TargetPlayer) then
-            -- Check the Silent mode
-            if getgenv().Silent.Startup.Enabled then
-                if getgenv().Silent.Startup.mode == "target" then
-                    -- Silent shooting only for the CamLock target
-                    print("TriggerBot activated on: " .. TargetPlayer.Name .. " with Silent shooting (target mode)")
-
-                    local BodyPart = GetClosestBodyPart(TargetPlayer.Character) -- Get the target body part for shooting
-                    if BodyPart then
-                        local closestPoint = BodyPart.Position  -- Position to shoot at
-                        local velocity = GetVelocity(TargetPlayer, BodyPart.Name)
-
-                        -- Fire the silent shot using the position
-                        Replicated_Storage[RemoteEvent]:FireServer(Argument, closestPoint + velocity * getgenv().Silent.Startup.Prediction)
-                    end
-                elseif getgenv().Silent.Startup.mode == "normal" then
-                    -- Silent shooting without needing a target
-                    print("TriggerBot activated with Silent shooting (normal mode)")
-
-                    -- You would need to implement logic here to find the closest player or target
-                    local closestPlayer = ClosestPlrFromMouse() -- This should find any player
-
-                    if closestPlayer and closestPlayer.Character then
-                        local BodyPart = GetClosestBodyPart(closestPlayer.Character) -- Get the closest body part
-                        if BodyPart then
-                            local closestPoint = BodyPart.Position  -- Position to shoot at
-                            local velocity = GetVelocity(closestPlayer, BodyPart.Name)
-
-                            -- Fire the silent shot using the position
-                            Replicated_Storage[RemoteEvent]:FireServer(Argument, closestPoint + velocity * getgenv().Silent.Startup.Prediction)
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
 RunService.RenderStepped:Connect(function()
     if IsTargeting and TargetPlayer and TargetPlayer.Character then
         -- Check if the target's health is below 7
@@ -820,7 +761,7 @@ RunService.RenderStepped:Connect(function()
             end
 
             -- Silent functionality: Shoot only the target that CamLock is locked onto
-            if getgenv().Silent.Startup.Enabled then -- Ensure Silent is enabled
+            if getgenv().Silent.Startup.Enabled and IsTargeting and TargetPlayer.Character:FindFirstChild("Humanoid") then
                 if getgenv().Silent.Startup.mode == "target" then
                     -- Silent shooting for the CamLock target
                     print("Silent shooting at: " .. TargetPlayer.Name)
@@ -1184,43 +1125,39 @@ end)
 
 
 -- Main Loop
-Run_Service.RenderStepped:Connect(function()
+-- Main Loop Update
+RunService.RenderStepped:Connect(function()
     if getgenv().Silent.Startup.Enabled and IsTargeting then  -- Ensure Silent is enabled and CamLock is engaged
         UpdateFOV()  -- Call UpdateFOV to refresh visibility
 
         -- Check the mode and act accordingly
         if getgenv().Silent.Startup.mode == "target" and TargetPlayer then
-            local target = TargetPlayer
-            
-            if target and target.Character then
-                -- Check if the target is knocked out (under 7 health)
-                if target.Character.Humanoid.Health < 7 then
+            if TargetPlayer.Character then
+                if TargetPlayer.Character.Humanoid.Health < 7 then
                     -- Automatically untoggle CamLock if the target's health is under 7
                     TargetPlayer = nil
                     IsTargeting = false  -- Stop targeting without notification
                     return
                 end
-                
-                if Death(target) then
+
+                if Death(TargetPlayer) then
                     -- If the target is dead, un-target
                     TargetPlayer = nil
                     IsTargeting = false  -- Stop targeting without notification
                     return
                 end
 
-                local closestPart, closestPoint = GetClosestHitPoint(target.Character)
+                local closestPart, closestPoint = GetClosestHitPoint(TargetPlayer.Character)
                 if closestPart and closestPoint then
-                    local velocity = GetVelocity(target, closestPart.Name)
+                    local velocity = GetVelocity(TargetPlayer, closestPart.Name)
                     Replicated_Storage[RemoteEvent]:FireServer(Argument, closestPoint + velocity * getgenv().Silent.Startup.Prediction)
                 end
             end
-        
         elseif getgenv().Silent.Startup.mode == "normal" then
             -- If in normal mode, use the closest player without needing a specific target
             local target = ClosestPlrFromMouse()  -- Function to get the closest player
             
             if target and target.Character then
-                -- Check if the target is knocked out (under 7 health)
                 if target.Character.Humanoid.Health < 7 then
                     return  -- Skip the shooting logic if target's health is under 7
                 end
@@ -1250,6 +1187,7 @@ task.spawn(function()
         end
     end
 end)
+
 
 
 
